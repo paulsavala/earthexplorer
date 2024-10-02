@@ -1,16 +1,23 @@
 from typing import Any, Dict, List, Optional, Type, Union
+import logging
 
 import requests
 import s3fs
 from fsspec import AbstractFileSystem
 
 import earthaccess
+from earthaccess.services import DataServices
 
 from .auth import Auth
-from .results import DataGranule, DataGranuleList, DataCollectionList
+from .results import DataCollection, DataGranule, DataGranuleList, DataCollectionList
 from .search import CollectionQuery, DataCollections, DataGranules, GranuleQuery
 from .store import Store
+from .system import PROD, System
 from .utils import _validation as validate
+
+from typing_extensions import Any, Dict, List, Optional, Union, deprecated
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_location(location: Optional[str]) -> Optional[str]:
@@ -28,9 +35,7 @@ def _normalize_location(location: Optional[str]) -> Optional[str]:
     return location
 
 
-def search_datasets(
-    count: int = -1, **kwargs: Any
-) -> earthaccess.results.DataCollectionList:
+def search_datasets(count: int = -1, **kwargs: Any) -> List[DataCollection]:
     """Search datasets using NASA's CMR.
 
     [https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html](https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html)
@@ -46,13 +51,16 @@ def search_datasets(
             * **daac**: e.g. NSIDC or PODAAC
             * **provider**: particular to each DAAC, e.g. POCLOUD, LPDAAC etc.
             * **temporal**: a tuple representing temporal bounds in the form
-              `("yyyy-mm-dd", "yyyy-mm-dd")`
+              `(date_from, date_to)`
             * **bounding_box**: a tuple representing spatial bounds in the form
               `(lower_left_lon, lower_left_lat, upper_right_lon, upper_right_lat)`
 
     Returns:
         A list of DataCollection results that can be used to get information about a
             dataset, e.g. concept_id, doi, etc.
+
+    Raises:
+        RuntimeError: The CMR query failed.
 
     Examples:
         ```python
@@ -62,10 +70,9 @@ def search_datasets(
         )
         ```
     """
-    # Validation only checks if kwargs are empty
     if not validate.valid_dataset_parameters(**kwargs):
-        print(
-            "Warning: a valid set of parameters is needed to search for datasets on CMR"
+        logger.warning(
+            "A valid set of parameters is needed to search for datasets on CMR"
         )
         return []
     if earthaccess.__auth__.authenticated:
@@ -73,15 +80,13 @@ def search_datasets(
     else:
         query = DataCollections().parameters(**kwargs)
     datasets_found = query.hits()
-    print(f"Datasets found: {datasets_found}")
+    logger.info(f"Datasets found: {datasets_found}")
     if count > 0:
         return query.get(count)
-    return DataCollectionList(query.get_all())
+    return query.get_all()
 
 
-def search_data(
-    count: int = -1, **kwargs: Any
-) -> earthaccess.results.DataGranuleList:
+def search_data(count: int = -1, **kwargs: Any) -> List[DataGranule]:
     """Search dataset granules using NASA's CMR.
 
     [https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html](https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html)
@@ -97,13 +102,16 @@ def search_data(
             * **daac**: e.g. NSIDC or PODAAC
             * **provider**: particular to each DAAC, e.g. POCLOUD, LPDAAC etc.
             * **temporal**: a tuple representing temporal bounds in the form
-              `("yyyy-mm-dd", "yyyy-mm-dd")`
+              `(date_from, date_to)`
             * **bounding_box**: a tuple representing spatial bounds in the form
               `(lower_left_lon, lower_left_lat, upper_right_lon, upper_right_lat)`
 
     Returns:
         a list of DataGranules that can be used to access the granule files by using
             `download()` or `open()`.
+
+    Raises:
+        RuntimeError: The CMR query failed.
 
     Examples:
         ```python
@@ -119,13 +127,41 @@ def search_data(
     else:
         query = DataGranules().parameters(**kwargs)
     granules_found = query.hits()
-    print(f"Granules found: {granules_found}")
+    logger.info(f"Granules found: {granules_found}")
     if count > 0:
         return query.get(count)
-    return DataGranuleList(query.get_all())
+    return query.get_all()
 
 
-def login(strategy: str = "all", persist: bool = False) -> Auth:
+def search_services(count: int = -1, **kwargs: Any) -> List[Any]:
+    """Search the NASA CMR for Services matching criteria.
+
+    See <https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html#service>.
+
+    Parameters:
+        count:
+            maximum number of services to fetch (if less than 1, all services
+            matching specified criteria are fetched [default])
+        kwargs:
+            keyword arguments accepted by the CMR for searching services
+
+    Returns:
+        list of services (possibly empty) matching specified criteria, in UMM
+        JSON format
+
+    Examples:
+        ```python
+        services = search_services(provider="POCLOUD", keyword="COG")
+        ```
+    """
+    query = DataServices(auth=earthaccess.__auth__).parameters(**kwargs)
+    hits = query.hits()
+    logger.info(f"Services found: {hits}")
+
+    return query.get(hits if count < 1 else min(count, hits))
+
+
+def login(strategy: str = "all", persist: bool = False, system: System = PROD) -> Auth:
     """Authenticate with Earthdata login (https://urs.earthdata.nasa.gov/).
 
     Parameters:
@@ -137,14 +173,21 @@ def login(strategy: str = "all", persist: bool = False) -> Auth:
             * **"netrc"**: retrieve username and password from ~/.netrc.
             * **"environment"**: retrieve username and password from `$EARTHDATA_USERNAME` and `$EARTHDATA_PASSWORD`.
         persist: will persist credentials in a .netrc file
+        system: the Earthdata system to access, defaults to PROD
 
     Returns:
         An instance of Auth.
     """
+    # Set the underlying Auth object's earthdata system,
+    # before triggering the getattr function for `__auth__`.
+    earthaccess._auth._set_earthdata_system(system)
+
     if strategy == "all":
         for strategy in ["environment", "netrc", "interactive"]:
             try:
-                earthaccess.__auth__.login(strategy=strategy, persist=persist)
+                earthaccess.__auth__.login(
+                    strategy=strategy, persist=persist, system=system
+                )
             except Exception:
                 pass
 
@@ -152,7 +195,7 @@ def login(strategy: str = "all", persist: bool = False) -> Auth:
                 earthaccess.__store__ = Store(earthaccess.__auth__)
                 break
     else:
-        earthaccess.__auth__.login(strategy=strategy, persist=persist)
+        earthaccess.__auth__.login(strategy=strategy, persist=persist, system=system)
         if earthaccess.__auth__.authenticated:
             earthaccess.__store__ = Store(earthaccess.__auth__)
 
@@ -179,6 +222,9 @@ def download(
 
     Returns:
         List of downloaded files
+
+    Raises:
+        Exception: A file download failed.
     """
     provider = _normalize_location(provider)
     if isinstance(granules, DataGranule):
@@ -188,17 +234,18 @@ def download(
     try:
         results = earthaccess.__store__.get(granules, local_path, provider, threads)
     except AttributeError as err:
-        print(err)
-        print("You must call earthaccess.login() before you can download data")
+        logger.error(
+            f"{err}: You must call earthaccess.login() before you can download data"
+        )
         return []
     return results
 
 
 def open(
-    granules: Union[List[str], List[earthaccess.results.DataGranule]],
+    granules: Union[List[str], List[DataGranule]],
     provider: Optional[str] = None,
 ) -> List[AbstractFileSystem]:
-    """Returns a list of fsspec file-like objects that can be used to access files
+    """Returns a list of file-like objects that can be used to access files
     hosted on S3 or HTTPS by third party libraries like xarray.
 
     Parameters:
@@ -207,7 +254,7 @@ def open(
         provider: e.g. POCLOUD, NSIDC_CPRD, etc.
 
     Returns:
-        a list of s3fs "file pointers" to s3 files.
+        A list of "file pointers" to remote (i.e. s3 or https) files.
     """
     provider = _normalize_location(provider)
     results = earthaccess.__store__.open(granules=granules, provider=provider)
@@ -217,7 +264,7 @@ def open(
 def get_s3_credentials(
     daac: Optional[str] = None,
     provider: Optional[str] = None,
-    results: Optional[List[earthaccess.results.DataGranule]] = None,
+    results: Optional[List[DataGranule]] = None,
 ) -> Dict[str, Any]:
     """Returns temporary (1 hour) credentials for direct access to NASA S3 buckets. We can
     use the daac name, the provider, or a list of results from earthaccess.search_data().
@@ -240,7 +287,7 @@ def get_s3_credentials(
     return earthaccess.__auth__.get_s3_credentials(daac=daac, provider=provider)
 
 
-def collection_query() -> Type[CollectionQuery]:
+def collection_query() -> CollectionQuery:
     """Returns a query builder instance for NASA collections (datasets).
 
     Returns:
@@ -253,8 +300,8 @@ def collection_query() -> Type[CollectionQuery]:
     return query_builder
 
 
-def granule_query() -> Type[GranuleQuery]:
-    """Returns a query builder instance for data granules
+def granule_query() -> GranuleQuery:
+    """Returns a query builder instance for data granules.
 
     Returns:
         a query builder instance for data granules.
@@ -309,12 +356,33 @@ def get_requests_https_session() -> requests.Session:
     return session
 
 
+@deprecated("Use get_s3_filesystem instead")
 def get_s3fs_session(
     daac: Optional[str] = None,
     provider: Optional[str] = None,
-    results: Optional[earthaccess.results.DataGranule] = None,
+    results: Optional[DataGranule] = None,
 ) -> s3fs.S3FileSystem:
     """Returns a fsspec s3fs file session for direct access when we are in us-west-2.
+
+    Parameters:
+        daac: Any DAAC short name e.g. NSIDC, GES_DISC
+        provider: Each DAAC can have a cloud provider.
+            If the DAAC is specified, there is no need to use provider.
+        results: A list of results from search_data().
+            `earthaccess` will use the metadata from CMR to obtain the S3 Endpoint.
+
+    Returns:
+        An `s3fs.S3FileSystem` authenticated for reading in-region in us-west-2 for 1 hour.
+    """
+    return get_s3_filesystem(daac, provider, results)
+
+
+def get_s3_filesystem(
+    daac: Optional[str] = None,
+    provider: Optional[str] = None,
+    results: Optional[DataGranule] = None,
+) -> s3fs.S3FileSystem:
+    """Return an `s3fs.S3FileSystem` for direct access when running within the AWS us-west-2 region.
 
     Parameters:
         daac: Any DAAC short name e.g. NSIDC, GES_DISC
@@ -331,9 +399,9 @@ def get_s3fs_session(
     if results is not None:
         endpoint = results[0].get_s3_credentials_endpoint()
         if endpoint is not None:
-            session = earthaccess.__store__.get_s3fs_session(endpoint=endpoint)
+            session = earthaccess.__store__.get_s3_filesystem(endpoint=endpoint)
             return session
-    session = earthaccess.__store__.get_s3fs_session(daac=daac, provider=provider)
+    session = earthaccess.__store__.get_s3_filesystem(daac=daac, provider=provider)
     return session
 
 

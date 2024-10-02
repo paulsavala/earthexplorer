@@ -10,6 +10,10 @@ from matplotlib import pyplot as plt
 from shapely.geometry import Polygon
 
 from .formatters import _repr_granule_html
+from typing import Any, Dict, List, Optional, Union
+from .services import DataServices
+
+import earthaccess
 
 
 class CustomDict(dict):
@@ -71,14 +75,10 @@ class DataCollection(CustomDict):
 
     _basic_umm_fields_ = [
         "ShortName",
-        "EntryTitle",
         "Abstract",
         "SpatialExtent",
         "TemporalExtents",
         "DataCenters",
-        "TotalFileSize",
-        "FileFormats",
-        "IsCloudHosted",
         "RelatedUrls",
         "ArchiveAndDistributionInformation",
         "DirectDistributionInformation",
@@ -108,9 +108,10 @@ class DataCollection(CustomDict):
         return summary_dict
 
     def get_umm(self, umm_field: str) -> Union[str, Dict[str, Any]]:
-        """
+        """Placeholder.
+
         Parameters:
-            umm_field: Valid UMM item, i.e. `TemporalExtent`
+            umm_field: Valid UMM item, i.e. `TemporalExtent`.
 
         Returns:
             The value of a given field inside the UMM (Unified Metadata Model).
@@ -130,14 +131,6 @@ class DataCollection(CustomDict):
         if meta_field in self["meta"]:
             return self["meta"][meta_field]
         return ""
-
-    def concept_id(self) -> str:
-        """
-        Returns:
-            A collection's `concept_id`.
-                This id is the most relevant search field on granule queries.
-        """
-        return self["meta"]["concept-id"]
 
     # def data_type(self) -> str:
     #     """
@@ -193,8 +186,16 @@ class DataCollection(CustomDict):
             return ", ".join(file_format_set)
         return ""
 
+    def concept_id(self) -> str:
+        """
+        Returns:
+            A collection's `concept_id`.This id is the most relevant search field on granule queries.
+        """
+        return self["meta"]["concept-id"]
+
     def version(self) -> str:
         """
+
         Returns:
             The collection's version.
         """
@@ -203,16 +204,18 @@ class DataCollection(CustomDict):
         return ""
 
     def abstract(self) -> str:
-        """
+        """Placeholder.
+
         Returns:
-            The abstract of a collection
+            The abstract of a collection.
         """
         if "Abstract" in self["umm"]:
             return self["umm"]["Abstract"]
         return ""
 
     def landing_page(self) -> str:
-        """
+        """Placeholder.
+
         Returns:
             The first landing page for the collection (can be many), if available.
         """
@@ -233,14 +236,24 @@ class DataCollection(CustomDict):
         return links
 
     def s3_bucket(self) -> Dict[str, Any]:
-        """
+        """Placeholder.
+
         Returns:
-            The S3 bucket information if the collection has it.
-                (**cloud hosted collections only**)
+            The S3 bucket information if the collection has it (**cloud hosted collections only**).
         """
         if "DirectDistributionInformation" in self["umm"]:
             return self["umm"]["DirectDistributionInformation"]
         return {}
+
+    def services(self) -> Dict[Any, List[Dict[str, Any]]]:
+        """Return list of services available for this collection."""
+        services = self.get("meta", {}).get("associations", {}).get("services", [])
+        queries = (
+            DataServices(auth=earthaccess.__auth__).parameters(concept_id=service)
+            for service in services
+        )
+
+        return {service: query.get_all() for service, query in zip(services, queries)}
 
     def __repr__(self) -> str:
         return json.dumps(
@@ -253,12 +266,12 @@ class DataCollectionList(List):
     def __init__(self, granules):
         super().__init__(granules)
 
-    def __repr__(self) -> List:
-        """
-        Returns:
-            The normal list of all collections (i.e. acts just like a list).
-        """
-        return super().__repr__()
+    # def __repr__(self) -> List:
+    #     """
+    #     Returns:
+    #         The normal list of all collections (i.e. acts just like a list).
+    #     """
+    #     return super().__repr__()
     
     def _create_button_html(self, link):
         return f'<button onclick="window.open(\'{link}\', \'_blank\')">View Data</button>'
@@ -310,12 +323,12 @@ class DataGranuleList(List):
     def __init__(self, granules):
         super().__init__(granules)
 
-    def __repr__(self) -> List:
-        """
-        Returns:
-            The normal list of all granules (i.e. acts just like a list).
-        """
-        return super().__repr__()
+    # def __repr__(self) -> List:
+    #     """
+    #     Returns:
+    #         The normal list of all granules (i.e. acts just like a list).
+    #     """
+    #     return super().__repr__()
     
     def summary(self) -> pd.DataFrame:
         """
@@ -494,7 +507,8 @@ class DataGranule(CustomDict):
             self.render_dict = self._filter_fields_(fields)
 
     def __repr__(self) -> str:
-        """
+        """Placeholder.
+
         Returns:
             A basic representation of a data granule.
         """
@@ -509,7 +523,8 @@ class DataGranule(CustomDict):
         return rep_str
 
     def _repr_html_(self) -> str:
-        """
+        """Placeholder.
+
         Returns:
             A rich representation for a data granule if we are in a Jupyter notebook.
         """

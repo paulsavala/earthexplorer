@@ -1,0 +1,35 @@
+name: Unit Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+      fail-fast: false
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - uses: ./.github/actions/install-pkg
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Typecheck
+        run: mypy
+
+      - name: Test
+        run: pytest tests/unit --cov=earthaccess --cov=tests --cov-report=term-missing --capture=no --tb=native --log-cli-level=INFO
+
+      - name: Upload coverage
+        # Don't upload coverage when using the `act` tool to run the workflow locally
+        if: ${{ !env.ACT }}
+        uses: codecov/codecov-action@v4

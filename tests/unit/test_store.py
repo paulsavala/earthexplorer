@@ -7,6 +7,7 @@ import pytest
 import responses
 import s3fs
 from earthaccess import Auth, Store
+from earthaccess.store import EarthAccessFile
 
 
 class TestStoreSessions(unittest.TestCase):
@@ -14,26 +15,17 @@ class TestStoreSessions(unittest.TestCase):
     def setUp(self):
         os.environ["EARTHDATA_USERNAME"] = "user"
         os.environ["EARTHDATA_PASSWORD"] = "password"
-        json_response = [
-            {"access_token": "EDL-token-1", "expiration_date": "12/15/2021"},
-            {"access_token": "EDL-token-2", "expiration_date": "12/16/2021"},
-        ]
+        json_response = {"access_token": "EDL-token-1", "expiration_date": "12/15/2021"}
         responses.add(
-            responses.GET,
-            "https://urs.earthdata.nasa.gov/api/users/tokens",
+            responses.POST,
+            "https://urs.earthdata.nasa.gov/api/users/find_or_create_token",
             json=json_response,
-            status=200,
-        )
-        responses.add(
-            responses.GET,
-            "https://urs.earthdata.nasa.gov/api/users/user?client_id=ntD0YGC_SM3Bjs-Tnxd7bg",
-            json={},
             status=200,
         )
         self.auth = Auth()
         self.auth.login(strategy="environment")
         self.assertEqual(self.auth.authenticated, True)
-        self.assertTrue(self.auth.token in json_response)
+        self.assertEqual(self.auth.token, json_response)
 
     def tearDown(self):
         self.auth = None
@@ -97,13 +89,22 @@ class TestStoreSessions(unittest.TestCase):
 
         store = Store(self.auth)
         self.assertTrue(isinstance(store.auth, Auth))
-        for daac in ["NSIDC", "PODAAC", "LPDAAC", "ORNLDAAC", "GES_DISC", "ASF"]:
-            s3_fs = store.get_s3fs_session(daac=daac)
+        for daac in [
+            "NSIDC",
+            "PODAAC",
+            "LPDAAC",
+            "ORNLDAAC",
+            "GES_DISC",
+            "ASF",
+            "OBDAAC",
+            "ASDC",
+        ]:
+            s3_fs = store.get_s3_filesystem(daac=daac)
             assert isinstance(s3_fs, s3fs.S3FileSystem)
             assert s3_fs.storage_options == expected_storage_options
 
         for endpoint in custom_endpoints:
-            s3_fs = store.get_s3fs_session(endpoint=endpoint)
+            s3_fs = store.get_s3_filesystem(endpoint=endpoint)
             assert isinstance(s3_fs, s3fs.S3FileSystem)
             assert s3_fs.storage_options == expected_storage_options
 
@@ -114,13 +115,27 @@ class TestStoreSessions(unittest.TestCase):
             "ORNL_CLOUD",
             "GES_DISC",
             "ASF",
+            "OB_CLOUD",
+            "LARC_CLOUD",
         ]:
-            s3_fs = store.get_s3fs_session(provider=provider)
+            s3_fs = store.get_s3_filesystem(provider=provider)
             assert isinstance(s3_fs, s3fs.S3FileSystem)
             assert s3_fs.storage_options == expected_storage_options
 
         # Ensure informative error is raised
         with pytest.raises(ValueError, match="parameters must be specified"):
-            store.get_s3fs_session()
+            store.get_s3_filesystem()
 
         return None
+
+
+@pytest.mark.xfail(
+    reason="This test reproduces a bug (#610) which has not yet been fixed."
+)
+def test_earthaccess_file_getattr():
+    fs = fsspec.filesystem("memory")
+    with fs.open("/foo", "wb") as f:
+        earthaccess_file = EarthAccessFile(f, granule="foo")
+        assert f.tell() == earthaccess_file.tell()
+    # cleanup
+    fs.store.clear()

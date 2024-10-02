@@ -1,0 +1,47 @@
+name: Unit test minimum dependencies
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# When this workflow is queued, automatically cancel any previous running
+# or pending jobs from the same branch
+concurrency:
+  group: test-mindeps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-mindeps:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: "0.4.7"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install minimum-compatible dependencies
+        run: uv sync --resolution lowest-direct --extra test
+
+      - name: Install earthaccess
+        run: uv pip install --no-deps .
+
+      - name: Test
+        run: uv run pytest tests/unit --cov=earthaccess --cov=tests --cov-report=term-missing --capture=no --tb=native --log-cli-level=INFO
+
+      - name: Upload coverage
+        # Don't upload coverage when using the `act` tool to run the workflow locally
+        if: ${{ !env.ACT }}
+        uses: codecov/codecov-action@v4
