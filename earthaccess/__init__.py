@@ -1,6 +1,7 @@
 import logging
 import threading
 from importlib.metadata import version
+from typing import Union
 
 from .api import (
     auth_environ,
@@ -17,9 +18,9 @@ from .api import (
     open,
     search_data,
     search_datasets,
-    # search_helper
 )
 from .auth import Auth
+from .helpers import get_spatial_boundary, display_spatial_boundary
 from .kerchunk import consolidate_metadata
 from .search import DataCollections, DataGranules
 from .services import DataServices
@@ -29,10 +30,10 @@ from .system import PROD, UAT
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    # api.py
     "login",
     "search_datasets",
     "search_data",
-    "search_helper",
     "get_requests_https_session",
     "get_fsspec_https_session",
     "get_s3fs_session",
@@ -54,6 +55,8 @@ __all__ = [
     "Store",
     # kerchunk
     "consolidate_metadata",
+    "get_spatial_boundary",
+    "display_spatial_boundary"
     "PROD",
     "UAT",
 ]
@@ -65,7 +68,7 @@ _store = None
 _lock = threading.Lock()
 
 
-def __getattr__(name):  # type: ignore
+def __getattr__(name) -> Union[Auth, Store, None]: # type: ignore
     """Module-level getattr to handle automatic authentication when accessing
     `earthaccess.__auth__` and `earthaccess.__store__`.
 

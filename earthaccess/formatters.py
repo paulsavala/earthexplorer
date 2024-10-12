@@ -1,5 +1,6 @@
 from typing import Any, List
 from uuid import uuid4
+from ipyleaflet import Map
 
 import importlib_resources
 
@@ -37,7 +38,9 @@ def _repr_granule_html(granule: Any) -> str:
             for link in granule.data_links()
         ]
     )
-    granule_size = round(granule.size(), 2)
+    granule_size = granule.size()
+
+    # granule_spatial_map = granule.plot_spatial_extent()
 
     # TODO: probably this needs to be integrated on a list data structure
     return f"""
@@ -46,8 +49,10 @@ def _repr_granule_html(granule: Any) -> str:
       <div class="container-fluid border">
         <div class="row border">
           <div class="col-6">
-            <p><b>Data</b>: {data_links}<p/>
-            <p><b>Size</b>: {granule_size} MB</p>
+            <p><b>Data</b>: {data_links}</p>
+            <p><b>Collection</b>: {granule['umm'].get('CollectionReference', "N/A")}</p>
+            <p><b>Temporal coverage</b>: {granule['umm'].get('TemporalExtent', "NA")}</p>
+            <p><b>Size</b>: {granule_size:.2f} MB</p>
             <p><b>Cloud Hosted</b>: <span>{granule.cloud_hosted}</span></p>
           </div>
           <div class="col-2 offset-sm-3 pull-right">

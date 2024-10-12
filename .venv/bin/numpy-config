@@ -1,4 +1,4 @@
-#!/Users/paulsavala/Projects/earthexplorer/.venv/bin/python3.12
+#!/Users/paulsavala/Projects/earthexplorer/.venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

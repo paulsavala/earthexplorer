@@ -1,9 +1,10 @@
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, cast
 import logging
 
 import requests
 import s3fs
 from fsspec import AbstractFileSystem
+from fsspec.spec import AbstractBufferedFile
 
 import earthaccess
 from earthaccess.services import DataServices
@@ -35,7 +36,7 @@ def _normalize_location(location: Optional[str]) -> Optional[str]:
     return location
 
 
-def search_datasets(count: int = -1, **kwargs: Any) -> List[DataCollection]:
+def search_datasets(count: int = -1, **kwargs: Any) -> DataCollectionList:
     """Search datasets using NASA's CMR.
 
     [https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html](https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html)
@@ -51,16 +52,13 @@ def search_datasets(count: int = -1, **kwargs: Any) -> List[DataCollection]:
             * **daac**: e.g. NSIDC or PODAAC
             * **provider**: particular to each DAAC, e.g. POCLOUD, LPDAAC etc.
             * **temporal**: a tuple representing temporal bounds in the form
-              `(date_from, date_to)`
+              `("yyyy-mm-dd", "yyyy-mm-dd")`
             * **bounding_box**: a tuple representing spatial bounds in the form
               `(lower_left_lon, lower_left_lat, upper_right_lon, upper_right_lat)`
 
     Returns:
         A list of DataCollection results that can be used to get information about a
             dataset, e.g. concept_id, doi, etc.
-
-    Raises:
-        RuntimeError: The CMR query failed.
 
     Examples:
         ```python
@@ -70,23 +68,22 @@ def search_datasets(count: int = -1, **kwargs: Any) -> List[DataCollection]:
         )
         ```
     """
+    # Validation only checks if kwargs are empty
     if not validate.valid_dataset_parameters(**kwargs):
-        logger.warning(
-            "A valid set of parameters is needed to search for datasets on CMR"
+        print(
+            "Warning: a valid set of parameters is needed to search for datasets on CMR"
         )
-        return []
+        return DataCollectionList([])
     if earthaccess.__auth__.authenticated:
         query = DataCollections(auth=earthaccess.__auth__).parameters(**kwargs)
     else:
         query = DataCollections().parameters(**kwargs)
-    datasets_found = query.hits()
-    logger.info(f"Datasets found: {datasets_found}")
     if count > 0:
-        return query.get(count)
-    return query.get_all()
+        return DataCollectionList(query.get(count))
+    return DataCollectionList(query.get_all())
 
 
-def search_data(count: int = -1, **kwargs: Any) -> List[DataGranule]:
+def search_data(count: int = -1, **kwargs: Any) -> DataGranuleList:
     """Search dataset granules using NASA's CMR.
 
     [https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html](https://cmr.earthdata.nasa.gov/search/site/docs/search/api.html)
@@ -129,8 +126,8 @@ def search_data(count: int = -1, **kwargs: Any) -> List[DataGranule]:
     granules_found = query.hits()
     logger.info(f"Granules found: {granules_found}")
     if count > 0:
-        return query.get(count)
-    return query.get_all()
+        return DataGranuleList(query.get(count))
+    return DataGranuleList(query.get_all())
 
 
 def search_services(count: int = -1, **kwargs: Any) -> List[Any]:
@@ -244,7 +241,7 @@ def download(
 def open(
     granules: Union[List[str], List[DataGranule]],
     provider: Optional[str] = None,
-) -> List[AbstractFileSystem]:
+) -> List[AbstractBufferedFile]:
     """Returns a list of file-like objects that can be used to access files
     hosted on S3 or HTTPS by third party libraries like xarray.
 
@@ -352,7 +349,7 @@ def get_requests_https_session() -> requests.Session:
 
         ```
     """
-    session = earthaccess.__store__.get_requests_session()
+    session = Store, earthaccess.__store__.get_requests_session()
     return session
 
 

@@ -6,13 +6,15 @@ import platform
 import shutil
 from netrc import NetrcParseError
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 from urllib.parse import urlparse
 
 import requests  # type: ignore
 from tinynetrc import Netrc
+from typing_extensions import deprecated
 
 from .daac import DAACS
+from .system import PROD, System
 
 try:
     user_agent = f"earthaccess v{importlib.metadata.version('earthaccess')}"
@@ -24,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class SessionWithHeaderRedirection(requests.Session):
-    """
-    Requests removes auth headers if the redirect happens outside the
+    """Requests removes auth headers if the redirect happens outside the
     original req domain.
     """
 
@@ -37,7 +38,9 @@ class SessionWithHeaderRedirection(requests.Session):
     ]
 
     def __init__(
-        self, username: Optional[str] = None, password: Optional[str] = None
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.headers.update({"User-Agent": user_agent})
@@ -45,9 +48,8 @@ class SessionWithHeaderRedirection(requests.Session):
         if username and password:
             self.auth = (username, password)
 
-    # Overrides from the library to keep headers when redirected to or from
-    # the NASA auth host.
     def rebuild_auth(self, prepared_request: Any, response: Any) -> None:
+        """Overrides from the library to keep headers when redirected to or from the NASA auth host."""
         headers = prepared_request.headers
         url = prepared_request.url
 
@@ -71,13 +73,15 @@ class Auth(object):
     def __init__(self) -> None:
         # Maybe all these predefined URLs should be in a constants.py file
         self.authenticated = False
-        self.tokens: List = []
-        self.EDL_GET_TOKENS_URL = "https://urs.earthdata.nasa.gov/api/users/tokens"
-        self.EDL_GET_PROFILE = "https://urs.earthdata.nasa.gov/api/users/<USERNAME>?client_id=ntD0YGC_SM3Bjs-Tnxd7bg"
-        self.EDL_GENERATE_TOKENS_URL = "https://urs.earthdata.nasa.gov/api/users/token"
-        self.EDL_REVOKE_TOKEN = "https://urs.earthdata.nasa.gov/api/users/revoke_token"
+        self.token: Optional[Mapping[str, str]] = None
+        self._set_earthdata_system(PROD)
 
-    def login(self, strategy: str = "netrc", persist: bool = False) -> Any:
+    def login(
+        self,
+        strategy: str = "netrc",
+        persist: bool = False,
+        system: Optional[System] = None,
+    ) -> Any:
         """Authenticate with Earthdata login.
 
         Parameters:
@@ -89,11 +93,15 @@ class Auth(object):
                 * **"environment"**:
                     Retrieve a username and password from $EARTHDATA_USERNAME and $EARTHDATA_PASSWORD.
             persist: Will persist credentials in a `.netrc` file.
+            system: the EDL endpoint to log in to Earthdata, defaults to PROD
 
         Returns:
             An instance of Auth.
         """
-        if self.authenticated:
+        if system is not None:
+            self._set_earthdata_system(system)
+
+        if self.authenticated and (system == self.system):
             logger.debug("We are already authenticated with NASA EDL")
             return self
         if strategy == "interactive":
@@ -102,58 +110,30 @@ class Auth(object):
             self._netrc()
         if strategy == "environment":
             self._environment()
+
         return self
 
+    def _set_earthdata_system(self, system: System) -> None:
+        self.system = system
+
+        # Maybe all these predefined URLs should be in a constants.py file
+        self.EDL_FIND_OR_CREATE_TOKEN_URL = (
+            f"https://{self.system.edl_hostname}/api/users/find_or_create_token"
+        )
+
+        self._eula_url = (
+            f"https://{self.system.edl_hostname}/users/earthaccess/unaccepted_eulas"
+        )
+        self._apps_url = f"https://{self.system.edl_hostname}/application_search"
+
+    @deprecated("No replacement, as tokens are now refreshed automatically.")
     def refresh_tokens(self) -> bool:
         """Refresh CMR tokens.
+
         Tokens are used to do authenticated queries on CMR for restricted and early access datasets.
         This method renews the tokens to make sure we can query the collections allowed to our EDL user.
         """
-        if len(self.tokens) == 0:
-            resp_tokens = self._generate_user_token(
-                username=self.username, password=self.password
-            )
-            if resp_tokens.ok:
-                self.token = resp_tokens.json()
-                self.tokens = [self.token]
-                logger.debug(
-                    f"earthaccess generated a token for CMR with expiration on: {self.token['expiration_date']}"
-                )
-                return True
-            else:
-                return False
-        if len(self.tokens) == 1:
-            resp_tokens = self._generate_user_token(
-                username=self.username, password=self.password
-            )
-            if resp_tokens.ok:
-                self.token = resp_tokens.json()
-                self.tokens.extend(self.token)
-                logger.debug(
-                    f"earthaccess generated a token for CMR with expiration on: {self.token['expiration_date']}"
-                )
-                return True
-            else:
-                return False
-
-        if len(self.tokens) == 2:
-            resp_revoked = self._revoke_user_token(self.token["access_token"])
-            if resp_revoked:
-                resp_tokens = self._generate_user_token(
-                    username=self.username, password=self.password
-                )
-                if resp_tokens.ok:
-                    self.token = resp_tokens.json()
-                    self.tokens[0] = self.token
-                    logger.debug(
-                        f"earthaccess generated a token for CMR with expiration on: {self.token['expiration_date']}"
-                    )
-                    return True
-                else:
-                    print(resp_tokens)
-                    return False
-
-        return False
+        return self.authenticated
 
     def get_s3_credentials(
         self,
@@ -195,13 +175,11 @@ class Auth(object):
                         cumulus_resp.url, allow_redirects=True, timeout=15
                     )
                     if not (auth_resp.ok):
-                        print(
+                        logger.error(
                             f"Authentication with Earthdata Login failed with:\n{auth_resp.text[0:1000]}"
                         )
-                        eula_url = "https://urs.earthdata.nasa.gov/users/earthaccess/unaccepted_eulas"
-                        apps_url = "https://urs.earthdata.nasa.gov/application_search"
-                        print(
-                            f"Consider accepting the EULAs available at {eula_url} and applications at {apps_url}"
+                        logger.error(
+                            f"Consider accepting the EULAs available at {self._eula_url} and applications at {self._apps_url}"
                         )
                         return {}
 
@@ -210,10 +188,12 @@ class Auth(object):
             else:
                 # This happens if the cloud provider doesn't list the S3 credentials or the DAAC
                 # does not have cloud collections yet
-                print(f"Credentials for the cloud provider {daac} are not available")
+                logger.info(
+                    f"Credentials for the cloud provider {daac} are not available"
+                )
                 return {}
         else:
-            print("We need to authenticate with EDL first")
+            logger.info("We need to authenticate with EDL first")
             return {}
 
     def get_session(self, bearer_token: bool = True) -> requests.Session:
@@ -226,22 +206,13 @@ class Auth(object):
             class Session instance with Auth and bearer token headers
         """
         session = SessionWithHeaderRedirection()
-        if bearer_token and self.authenticated:
+        if bearer_token and self.token:
             # This will avoid the use of the netrc after we are logged in
             session.trust_env = False
             session.headers.update(
                 {"Authorization": f'Bearer {self.token["access_token"]}'}
             )
         return session
-
-    def get_user_profile(self) -> Dict[str, Any]:
-        if hasattr(self, "username") and self.authenticated:
-            session = self.get_session()
-            url = self.EDL_GET_PROFILE.replace("<USERNAME>", self.username)
-            user_profile = session.get(url).json()
-            return user_profile
-        else:
-            return {}
 
     def _interactive(self, persist_credentials: bool = False) -> bool:
         username = input("Enter your Earthdata Login username: ")
@@ -250,7 +221,7 @@ class Auth(object):
         if authenticated:
             logger.debug("Using user provided credentials for EDL")
             if persist_credentials:
-                print("Persisting credentials to .netrc")
+                logger.info("Persisting credentials to .netrc")
                 self._persist_user_credentials(username, password)
         return authenticated
 
@@ -261,11 +232,11 @@ class Auth(object):
             raise FileNotFoundError(f"No .netrc found in {Path.home()}") from err
         except NetrcParseError as err:
             raise NetrcParseError("Unable to parse .netrc") from err
-        if my_netrc["urs.earthdata.nasa.gov"] is not None:
-            username = my_netrc["urs.earthdata.nasa.gov"]["login"]
-            password = my_netrc["urs.earthdata.nasa.gov"]["password"]
-        else:
+        if (creds := my_netrc[self.system.edl_hostname]) is None:
             return False
+
+        username = creds["login"]
+        password = creds["password"]
         authenticated = self._get_credentials(username, password)
         if authenticated:
             logger.debug("Using .netrc file for EDL")
@@ -288,10 +259,10 @@ class Auth(object):
         self, username: Optional[str], password: Optional[str]
     ) -> bool:
         if username is not None and password is not None:
-            token_resp = self._get_user_tokens(username, password)
+            token_resp = self._find_or_create_token(username, password)
 
             if not (token_resp.ok):  # type: ignore
-                print(
+                logger.info(
                     f"Authentication with Earthdata Login failed with:\n{token_resp.text}"
                 )
                 return False
@@ -299,65 +270,25 @@ class Auth(object):
             self.username = username
             self.password = password
 
-            self.tokens = token_resp.json()
+            token = token_resp.json()
+            logger.debug(
+                f"Using token with expiration date: {token['expiration_date']}"
+            )
+            self.token = token
             self.authenticated = True
-
-            if len(self.tokens) == 0:
-                self.refresh_tokens()
-                logger.debug(
-                    f"earthaccess generated a token for CMR with expiration on: {self.token['expiration_date']}"
-                )
-                self.token = self.tokens[0]
-            elif len(self.tokens) > 0:
-                self.token = self.tokens[0]
-                logger.debug(
-                    f"Using token with expiration date: {self.token['expiration_date']}"
-                )
-            profile = self.get_user_profile()
-            if "email_address" in profile:
-                self.user_profile = profile
-                self.email = profile["email_address"]
-            else:
-                self.email = ""
 
         return self.authenticated
 
-    def _get_user_tokens(self, username: str, password: str) -> Any:
-        session = SessionWithHeaderRedirection(username, password)
-        auth_resp = session.get(
-            self.EDL_GET_TOKENS_URL,
-            headers={
-                "Accept": "application/json",
-            },
-            timeout=10,
-        )
-        return auth_resp
-
-    def _generate_user_token(self, username: str, password: str) -> Any:
+    def _find_or_create_token(self, username: str, password: str) -> Any:
         session = SessionWithHeaderRedirection(username, password)
         auth_resp = session.post(
-            self.EDL_GENERATE_TOKENS_URL,
+            self.EDL_FIND_OR_CREATE_TOKEN_URL,
             headers={
                 "Accept": "application/json",
             },
             timeout=10,
         )
         return auth_resp
-
-    def _revoke_user_token(self, token: str) -> bool:
-        if self.authenticated:
-            session = SessionWithHeaderRedirection(self.username, self.password)
-            auth_resp = session.post(
-                self.EDL_REVOKE_TOKEN,
-                params={"token": token},
-                headers={
-                    "Accept": "application/json",
-                },
-                timeout=10,
-            )
-            return auth_resp.ok
-        else:
-            return False
 
     def _persist_user_credentials(self, username: str, password: str) -> bool:
         # See: https://github.com/sloria/tinynetrc/issues/34
@@ -366,10 +297,13 @@ class Auth(object):
             netrc_path.touch(exist_ok=True)
             netrc_path.chmod(0o600)
         except Exception as e:
-            print(e)
+            logger.error(e)
             return False
         my_netrc = Netrc(str(netrc_path))
-        my_netrc["urs.earthdata.nasa.gov"] = {"login": username, "password": password}
+        my_netrc[self.system.edl_hostname] = {
+            "login": username,
+            "password": password,
+        }
         my_netrc.save()
         urs_cookies_path = Path.home() / ".urs_cookies"
         if not urs_cookies_path.exists():

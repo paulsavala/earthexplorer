@@ -70,10 +70,10 @@ DAACS = [
     {
         "short-name": "OBDAAC",
         "name": "NASA's Ocean Biology Distributed Active Archive Center",
-        "homepage": "https://earthdata.nasa.gov/eosdis/daacs/obdaac",
-        "cloud-providers": [],
+        "homepage": "https://oceancolor.gsfc.nasa.gov/",
+        "cloud-providers": ["OB_CLOUD"],
         "on-prem-providers": ["OB_DAAC"],
-        "s3-credentials": "",
+        "s3-credentials": "https://obdaac-tea.earthdatacloud.nasa.gov/s3credentials",
         "eulas": [],
     },
     {
@@ -94,19 +94,17 @@ DAACS = [
         "s3-credentials": "https://data.laadsdaac.earthdatacloud.nasa.gov/s3credentials",
         "eulas": [],
     },
+    {
+        "short-name": "ASDC",
+        "name": "Atmospheric Science Data Center",
+        "homepage": "https://asdc.larc.nasa.gov/",
+        "cloud-providers": ["LARC_CLOUD"],
+        "on-prem-providers": ["LARC_ASDC"],
+        "s3-credentials": "https://data.asdc.earthdata.nasa.gov/s3credentials",
+        "eulas": [],
+    },
 ]
 
-
-CLOUD_PROVIDERS = [
-    "GES_DISC",
-    "LPCLOUD",
-    "NSIDC_CPRD",
-    "POCLOUD",
-    "ASF",
-    "GHRC_DAAC",
-    "ORNL_CLOUD",
-    "LAADS",
-]
 
 # Some testing urls behind EDL
 DAAC_TEST_URLS = [
@@ -116,6 +114,7 @@ DAAC_TEST_URLS = [
     "https://hydro1.gesdisc.eosdis.nasa.gov/data/GLDAS/GLDAS_NOAH10_M.2.0/1948/",
     "https://e4ftl01.cr.usgs.gov//DP114/MOTA/MCD43A3.006/2000.02.24/MCD43A3.A2000055.h15v07.006.2016101151720.hdf.xml",
     "https://daac.ornl.gov/daacdata/npp/grassland/NPP_BCN/data/bcn_cli.txt",
+    "https://data.asdc.earthdata.nasa.gov/asdc-prod-protected/FIELDCAMPAIGN/TRACE/TRACE-A_001/TRACE-A-tra11_90.m.Z",
 ]
 
 

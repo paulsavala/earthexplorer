@@ -17,7 +17,6 @@ from typing_extensions import (
     override,
 )
 
-import dateutil.parser as parser
 import requests
 from cmr import CollectionQuery, GranuleQuery
 
@@ -30,47 +29,6 @@ logger = logging.getLogger(__name__)
 
 FloatLike: TypeAlias = Union[str, SupportsFloat]
 PointLike: TypeAlias = Tuple[FloatLike, FloatLike]
-
-
-def get_results(
-    query: Union[CollectionQuery, GranuleQuery], limit: int = 2000
-) -> List[Any]:
-    """
-    Get all results up to some limit, even if spanning multiple pages.
-
-    ???+ Tip
-        The default page size is 2000, if the supplied value is greater then the Search-After header
-        will be used to iterate across multiple requests until either the limit has been reached
-        or there are no more results.
-    Parameters:
-        limit: The number of results to return
-
-    Returns:
-        query results as a list
-    """
-
-    page_size = min(limit, 2000)
-    url = query._build_url()
-
-    results: List = []
-    more_results = True
-    headers = dict(query.headers or {})
-    while more_results:
-        response = requests.get(url, headers=headers, params={"page_size": page_size})
-        headers["cmr-search-after"] = response.headers.get("cmr-search-after")
-
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as ex:
-            raise RuntimeError(ex.response.text)
-
-        latest = response.json()["items"]
-
-        results.extend(latest)
-
-        more_results = page_size <= len(latest) and len(results) < limit
-
-    return results
 
 
 class DataCollections(CollectionQuery):
@@ -157,7 +115,7 @@ class DataCollections(CollectionQuery):
         ]
 
     @override
-    def concept_id(self, IDs: Sequence[str]) -> Self:
+    def concept_id(self, ids: Sequence[str]) -> Self:
         """Filter by concept ID.
 
         For example: C1299783579-LPDAAC_ECS or G1327299284-LPDAAC_ECS,
@@ -172,7 +130,7 @@ class DataCollections(CollectionQuery):
         * If providing a service's concept ID, it will uniquely identify those services.
 
         Parameters:
-            IDs: ID(s) to search by. Can be provided as a string or list of strings.
+            ids: ID(s) to search by. Can be provided as a string or list of strings.
 
         Returns:
             self
@@ -180,7 +138,7 @@ class DataCollections(CollectionQuery):
         Raises:
             ValueError: An ID does not start with a valid prefix.
         """
-        return super().concept_id(IDs)
+        return super().concept_id(ids)
 
     @override
     def keyword(self, text: str) -> Self:
@@ -555,8 +513,8 @@ class DataGranules(GranuleQuery):
 
         return self
     
-    def project(self, project: str) -> Type[CollectionQuery]:
-        """Searh datasets by associated project
+    def project(self, project: str) -> Self:
+        """Search datasets by associated project
 
         ???+ Tip
             Not all datasets have an associated project. This works
@@ -572,7 +530,7 @@ class DataGranules(GranuleQuery):
         self.params["project"] = project
         return self
 
-    def provider(self, provider: str = "") -> Type[CollectionQuery]:
+    def provider(self, provider: str = "") -> Self:
         """Only match collections from a given provider.
         A NASA datacenter or DAAC can have one or more providers.
         For example, PODAAC is a data center or DAAC,
